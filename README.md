@@ -1,8 +1,25 @@
 # OpenWrt Installation Guide & Build Tools for TP-Link Archer AX55 v1
 
-This repository provides instructions, scripts, and patches to build and install OpenWrt on the **TP-Link Archer AX55 v1** wireless router without requiring a hardware serial (UART) connection.
+This repository provides comprehensive instructions, scripts, and kernel patches to build and install OpenWrt on the **TP-Link Archer AX55 v1** wireless router without requiring a hardware serial (UART) connection.
 
 ![OpenWrt LuCI Web Interface on TP-Link Archer AX55 v1](docs/images/luci-status.png)
+
+---
+
+## 📥 Pre-Compiled Firmware Downloads
+
+Pre-built, patched OpenWrt binaries (including the **SerDes timing fix** and the **LuCI Web GUI**) are available on the [**GitHub Releases Page**](https://github.com/Zaykus/openwrt-tplink-archer-ax55-v1/releases):
+
+| File | Size | Description |
+| :--- | :--- | :--- |
+| `openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-initramfs-factory.ubi` | ~13.8 MB | Intermediate RAM boot image (used in Step 3) |
+| `openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-squashfs-sysupgrade.bin` | ~13.4 MB | Permanent flash image with LuCI Web GUI (used in Step 4) |
+
+### Checksums (SHA-256)
+```text
+b5b812b1a38489b411c5c8304c339bd81b1b21fc911742eb05bd26d0e0987fa5  openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-initramfs-factory.ubi
+e64716535c4fea0c3577d9a124b3a480941845c32f7365570da4717f89ca20b3  openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-squashfs-sysupgrade.bin
+```
 
 ---
 
@@ -21,13 +38,15 @@ This repository provides instructions, scripts, and patches to build and install
 
 ---
 
-## Architecture & Installation Concept
+## Key Features & Fixes in this Release
 
-Official TP-Link firmware images enforce signature checks during recovery mode, but standard web upgrades on stock releases prior to encrypted branches accept repacked images whose MD5 header checksum has been updated.
-
-1. **Repacked Stock Base**: Unpack an unencrypted stock image (e.g. version 1.3.3), enable `telnetd` in `/etc/rc.local`, fix the header checksum, and flash via the web interface.
-2. **Intermediate RAM Boot**: Using Telnet access, write `openwrt-initramfs-factory.ubi` to the inactive flash slot and switch the boot slot environment variable (`tp_boot_idx`).
-3. **Permanent Upgrade**: Once booted into OpenWrt in RAM, run `sysupgrade -n` with the permanent `squashfs-sysupgrade.bin` containing the LuCI web interface.
+1. **Kernel SerDes Timing Fix (PR #25153)**:
+   * Resolves the known race condition where the link between the Qualcomm IPQ5018 CPU and the Realtek RTL8367S switch initializes in the reverse order on cold boots, leaving Ethernet ports dead.
+   * Holds back SerDes bring-up until the network conduit reports operational, ensuring all wired ports come up reliably on every reboot.
+2. **LuCI Web GUI Pre-installed**:
+   * Upstream snapshot images lack a web interface by default. This build bakes `luci` and `luci-ssl` directly into the firmware image so `http://192.168.1.1` opens immediately upon boot.
+3. **No-Serial Installation Method**:
+   * Utilizes an unencrypted stock firmware base image to inject Telnet access, enabling a completely software-based flashing procedure without opening the router casing.
 
 ---
 
@@ -36,8 +55,11 @@ Official TP-Link firmware images enforce signature checks during recovery mode, 
 ```
 ├── configs/
 │   └── ubinize-ipq50xx.cfg      # UBI volume layout configuration
+├── docs/
+│   └── images/
+│       └── luci-status.png      # LuCI dashboard status screenshot
 ├── patches/
-│   └── serdes-timing-fix.patch  # Fix for IPQ5018 / RTL8367S switch link initialization
+│   └── 740-net-dsa-realtek-rtl8365mb-delay-serdes-up-until-cond.patch  # SerDes cold-boot fix
 ├── scripts/
 │   ├── 01-unpack.sh             # Unpack stock firmware UBI/squashfs
 │   ├── 02-repack.sh             # Repack modified rootfs with MD5 fix
@@ -50,38 +72,31 @@ Official TP-Link firmware images enforce signature checks during recovery mode, 
 
 ---
 
-## Prerequisites (Linux / WSL)
+## Step-by-Step Installation Guide (No Serial Required)
 
-Install the necessary compilation and unpack utilities:
+### Step 1: Create and Flash Telnet-Enabled Stock Firmware
 
-```bash
-sudo apt update
-sudo apt install -y build-essential gcc make libssl-dev mtd-utils squashfs-tools python3 python3-pip
-pip install ubi_reader
-```
-
----
-
-## Step 1: Create the Telnet-Enabled Stock Firmware
-
-1. Place your unencrypted stock firmware (`.bin`) in the workspace.
-2. Unpack the image as root:
+1. Sourcing a stock unencrypted firmware image (version 1.3.3 or earlier).
+2. Install prerequisites on your Linux / WSL environment:
+   ```bash
+   sudo apt update
+   sudo apt install -y build-essential gcc make libssl-dev mtd-utils squashfs-tools python3 python3-pip
+   pip install ubi_reader
+   ```
+3. Unpack the stock image as root:
    ```bash
    sudo ./scripts/01-unpack.sh stock_firmware.bin
    ```
-3. Enable Telnet in `squashfs-root/etc/rc.local` by adding this line before `exit 0`:
-   ```bash
-   telnetd -l /bin/sh &
-   ```
-4. Repack the firmware:
+4. Add `telnetd -l /bin/sh &` into `squashfs-root/etc/rc.local` immediately before `exit 0`.
+5. Repack the firmware:
    ```bash
    sudo ./scripts/02-repack.sh ax55-repacked-telnet.bin
    ```
-5. Navigate to the router web UI (`http://192.168.0.1`), open **Advanced** -> **System Tools** -> **Firmware Upgrade**, and upload `ax55-repacked-telnet.bin`.
+6. Navigate to the stock router web interface (`http://192.168.0.1`), open **Advanced** -> **System Tools** -> **Firmware Upgrade**, and flash `ax55-repacked-telnet.bin`.
 
 ---
 
-## Step 2: Switch Hardware Verification
+### Step 2: Switch Hardware Verification
 
 Once the router reboots, connect via Telnet:
 
@@ -89,28 +104,34 @@ Once the router reboots, connect via Telnet:
 telnet 192.168.0.1
 ```
 
-Verify your internal switch model:
+Run the switch verification check:
 
 ```bash
 dmesg | grep -o 'find rtk switch [0-9]*'
 ```
 
-* **`find rtk switch 0`**: Supported RTL8367S switch. Proceed to the next step.
-* **Other or empty**: Stop installation (indicates an alternative revision that lacks driver support in standard OpenWrt).
+* **`find rtk switch 0`**: Supported RTL8367S switch. Proceed to Step 3.
+* **Other or empty**: Stop installation (indicates the alternative `-VB` switch variant which lacks driver support in current OpenWrt).
 
 ---
 
-## Step 3: Flash OpenWrt via RAM Boot
+### Step 3: Flash OpenWrt via RAM Boot
 
-1. Start an HTTP server on your PC (e.g. `python3 -m http.server 8000`) hosting `openwrt-initramfs-factory.ubi`.
-2. In the router Telnet session:
+1. Start an HTTP server on your PC in the directory containing the downloaded release images:
+   ```bash
+   python3 -m http.server 8000
+   ```
+2. In the router Telnet session, download the RAM boot image:
    ```bash
    cd /tmp
-   wget http://<PC_IP>:8000/openwrt-initramfs-factory.ubi -O factory.ubi
+   wget http://<PC_IP>:8000/openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-initramfs-factory.ubi -O factory.ubi
+   ```
+3. Identify the inactive partition slot:
+   ```bash
    fw_printenv tp_boot_idx
    cat /proc/mtd | grep -E '"rootfs"|"rootfs_1"'
    ```
-3. Identify the inactive partition. For example, if active is `tp_boot_idx=1` (`rootfs_1`), write to `mtd11` (`rootfs`):
+4. Flash the inactive partition. For example, if active is `tp_boot_idx=1` (`rootfs_1`), write to `mtd11` (`rootfs`):
    ```bash
    mtd erase /dev/mtd11
    mtd write /tmp/factory.ubi /dev/mtd11
@@ -121,7 +142,7 @@ dmesg | grep -o 'find rtk switch [0-9]*'
 
 ---
 
-## Step 4: Final Permanent OpenWrt Installation
+### Step 4: Final Permanent OpenWrt Installation
 
 1. After rebooting, the router starts OpenWrt in RAM at `192.168.1.1`.
 2. Connect via SSH:
@@ -131,31 +152,42 @@ dmesg | grep -o 'find rtk switch [0-9]*'
 3. Download and flash the permanent sysupgrade image:
    ```bash
    cd /tmp
-   wget http://<PC_IP>:8000/openwrt-squashfs-sysupgrade.bin -O sysupgrade.bin
+   wget http://<PC_IP>:8000/openwrt-qualcommax-ipq50xx-tplink_archer-ax55-v1-squashfs-sysupgrade.bin -O sysupgrade.bin
    sysupgrade -n /tmp/sysupgrade.bin
    ```
-4. The router writes the permanent flash and reboots into OpenWrt with LuCI enabled.
+4. The router flashes NAND memory and reboots permanently into OpenWrt with LuCI enabled.
 
 ---
 
-## Step 5: Web Interface & Wi-Fi Configuration
+### Step 5: Web Control Panel & Wi-Fi Configuration
 
-1. Connect your PC to a LAN port and open `http://192.168.1.1` in your browser.
+1. Connect your PC to any yellow LAN port and open `http://192.168.1.1` in your browser.
 2. Log in (default password is empty) and set an administrative password under **System** -> **Administration**.
-3. Under **Network** -> **Wireless**, edit both radios:
-   * `radio0`: 2.4 GHz (802.11ax)
-   * `radio1`: 5 GHz (802.11ax)
-   Set your SSID and WPA2/WPA3 credentials, then click **Enable** and **Save & Apply**.
+3. Under **Network** -> **Wireless**, configure both radios:
+   * **`radio0`**: 2.4 GHz (802.11ax)
+   * **`radio1`**: 5 GHz (802.11ax)
+4. Set your SSID and security mode (`WPA2-PSK/WPA3-SAE mixed`), then click **Enable** and **Save & Apply**.
+
+---
+
+### Step 6: Setting up Wi-Fi Repeater / Range Extender Mode (Optional)
+
+To connect the router to an existing Wi-Fi network and re-broadcast it:
+1. Go to **Network** -> **Wireless**.
+2. Click **Scan** on the radio corresponding to the source network (e.g. `radio1` for 5 GHz).
+3. Find your network, click **Join Network**, enter the password, and ensure the firewall zone is set to **`wan`**.
+4. Keep the **Master (Access Point)** interface active to broadcast your private Wi-Fi network.
+5. Click **Save & Apply**.
 
 ---
 
 ## Recovery Procedure (Return to OEM)
 
-The Archer AX55 features a built-in hardware recovery mode in U-Boot:
+The Archer AX55 features an indestructible U-Boot hardware web recovery:
 
 1. Configure your PC with static IP `192.168.0.10` / subnet `255.255.255.0` and connect via Ethernet to LAN 1.
 2. Turn off the router.
-3. Hold the **Reset button** while powering on, keep holding for 10 seconds, then release.
+3. Hold the **Reset button** with a pin while powering on, keep holding for 10 seconds, then release.
 4. Navigate to `http://192.168.0.1` in your web browser.
 5. Upload an official signed TP-Link firmware image to restore factory software.
 
@@ -164,4 +196,4 @@ The Archer AX55 features a built-in hardware recovery mode in U-Boot:
 ## License
 
 All original scripts and documentation in this repository are released under the MIT License.
-OpenWrt patches and build files adhere to the GNU General Public License v2 (GPL-2.0).
+OpenWrt kernel patches adhere to the GNU General Public License v2 (GPL-2.0).
