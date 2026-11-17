@@ -1,0 +1,22 @@
+# Ignore compiled binaries and firmware images (no copyrighted binary blobs)
+*.bin
+*.ubi
+*.itb
+*.img
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+*.log
+
+# Ignore build artifacts and temporary extraction folders
+/scripts/md5-fix
+/tmp/
+/squashfs-root/
+/build_dir/
+/staging_dir/
+/dl/
+.DS_Store
+Thumbs.db
