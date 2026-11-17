@@ -2,6 +2,8 @@
 
 This repository provides instructions, scripts, and patches to build and install OpenWrt on the **TP-Link Archer AX55 v1** wireless router without requiring a hardware serial (UART) connection.
 
+![OpenWrt LuCI Web Interface on TP-Link Archer AX55 v1](docs/images/luci-status.png)
+
 ---
 
 ## Hardware Specifications
